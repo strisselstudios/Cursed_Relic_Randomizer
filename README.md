@@ -1,8 +1,11 @@
 Cursed Relic Randomizer documentation
 
+Windows SmartScreen may show a warning on first launch.
+This is expected for unsigned applications built with PyInstaller.
+Click "More info" → "Run anyway".
+
 Thank you for your interest in my relic randomizer.
 Its pretty self explanatory, but ill give instructions anyway:
-
 
 ~Spin the mystery box to receive a random Map and combination of relics.
 
