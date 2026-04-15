@@ -1,6 +1,6 @@
 Cursed Relic Randomizer documentation
 
-Thank you for downloading my relic randomizer.
+Thank you for your interest in my relic randomizer.
 Its pretty self explanatory, but ill give instructions anyway:
 
 
