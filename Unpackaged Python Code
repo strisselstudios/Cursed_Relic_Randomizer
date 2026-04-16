@@ -1,0 +1,457 @@
+# === CORE IMPORTS ===
+import sys
+import os
+import random
+
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QLabel, QPushButton, QComboBox, QMessageBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QScrollArea
+)
+from PyQt5.QtCore import Qt, QTimer, QUrl
+from PyQt5.QtGui import QFont, QMovie, QPixmap
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+
+# === FILE PATH CONFIGURATION ===
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+gif_path = os.path.join(BASE_DIR, "ChestUpdated.gif")
+audio_path = os.path.join(BASE_DIR, "mystery-box-jingle-full.wav")
+mrpeeks_path = os.path.join(BASE_DIR, "MrPeeks.png")
+laugh_path = os.path.join(BASE_DIR, "BoxLaugh.wav")
+
+# === MR PEEKS SCALE ===
+MRPEEKS_SCALE = 1
+
+MAPS = [
+    "Ashes of the Damned",
+    "Astra Malorum",
+    "Paradox Junction",
+    "Farm Survival",
+    "Exit 115 Survival",
+    "Cosmodrome Survival",
+    "Mars Survival",
+    "Ashwood Survival"
+]
+
+letter_objects = {
+    'A': ("Lawyer's Pen", 1),
+    'B': ("Dragon Wings", 1),
+    'C': ("Teddy Bear", 1),
+    'D': ("Gong", 1),
+    'E': ("Seed", 1),
+    'F': ("Rocket", 1),
+    'G': ("Vrill Sphere", 2),
+    'H': ("Sam's Drawing", 2),
+    'I': ("Focusing Stone", 2),
+    'J': ("Fang", 2),
+    'K': ("Matryoshka Dolls", 2),
+    'L': ("Summoning Key", 2),
+    'M': ("Bus", 3),
+    'N': ("Dragon Head", 3),
+    'O': ("Blood Vials", 3),
+    'P': ("Golden Spork", 3),
+    'Q': ("Civil Protector", 3),
+    'R': ("Mangler Helmet", 3)
+}
+
+letters = list(letter_objects.keys())
+
+def pick_random_combination(target_sum, tier, enabled_relics, hard_mode=False, max_attempts=100000):
+    pool = [l for l in letters if l in enabled_relics]
+
+    for _ in range(max_attempts):
+        random.shuffle(pool)
+        combo = []
+        total = 0
+
+        for l in pool:
+            if total + letter_objects[l][1] <= target_sum or (tier == 3 and hard_mode):
+                if random.random() < 0.5:
+                    combo.append(l)
+                    total += letter_objects[l][1]
+
+        if tier in (1, 2) and total == target_sum:
+            return combo
+
+        if tier == 3:
+            if hard_mode and total >= target_sum:
+                return combo
+            if not hard_mode and total == target_sum:
+                return combo
+
+    return None
+
+
+class ConfigureDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Configure")
+        self.setFixedSize(420, 300)
+
+        self.parent = parent
+
+        layout = QHBoxLayout(self)
+
+        self.map_checks = []
+        self.relic_checks = []
+
+        left = QVBoxLayout()
+        right = QVBoxLayout()
+
+        left.addWidget(QLabel("Maps"))
+        right.addWidget(QLabel("Relics"))
+
+        self.map_container = QWidget()
+        self.relic_container = QWidget()
+
+        self.map_layout = QVBoxLayout(self.map_container)
+        self.relic_layout = QVBoxLayout(self.relic_container)
+
+        for m in MAPS:
+            cb = QCheckBox(m)
+            cb.setChecked(m in self.parent.enabled_maps)
+            self.map_checks.append(cb)
+            self.map_layout.addWidget(cb)
+
+        for k, v in letter_objects.items():
+            cb = QCheckBox(f"{k} - {v[0]}")
+            cb.setChecked(k in self.parent.enabled_relics)
+            cb.key = k
+            self.relic_checks.append(cb)
+            self.relic_layout.addWidget(cb)
+
+        scroll_left = QScrollArea()
+        scroll_right = QScrollArea()
+
+        scroll_left.setWidget(self.map_container)
+        scroll_left.setWidgetResizable(True)
+
+        scroll_right.setWidget(self.relic_container)
+        scroll_right.setWidgetResizable(True)
+
+        left.addWidget(scroll_left)
+        right.addWidget(scroll_right)
+
+        layout.addLayout(left)
+        layout.addLayout(right)
+
+        self.save_btn = QPushButton("Save")
+        self.save_btn.clicked.connect(self.save)
+
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.clicked.connect(self.reset_checks)
+
+        btn_layout = QVBoxLayout()
+        btn_layout.addWidget(self.save_btn)
+        btn_layout.addWidget(self.reset_btn)
+
+        self.layout().addLayout(btn_layout)
+
+    def save(self):
+        self.parent.enabled_maps = [cb.text() for cb in self.map_checks if cb.isChecked()]
+        self.parent.enabled_relics = [cb.key for cb in self.relic_checks if cb.isChecked()]
+        self.accept()
+
+    def reset_checks(self):
+        for cb in self.map_checks:
+            cb.setChecked(True)
+        for cb in self.relic_checks:
+            cb.setChecked(True)
+
+
+class RelicApp(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.scale = 1.75
+        self.base_w = int(800 * self.scale)
+        self.base_h = int(500 * self.scale)
+
+        self.setWindowTitle("Cursed Relic Randomizer")
+        self.setFixedSize(self.base_w, self.base_h)
+
+        self.enabled_maps = MAPS.copy()
+        self.enabled_relics = list(letter_objects.keys())
+
+        self.title_font = QFont("Times New Roman", int(22 * self.scale), QFont.Bold)
+        self.header_font = QFont("Times New Roman", int(14 * self.scale), QFont.Bold)
+        self.ui_font = QFont("Times New Roman", int(13 * self.scale), QFont.Bold)
+        self.credits_font = QFont("Times New Roman", int(7 * self.scale))
+
+        self.player = QMediaPlayer()
+
+        self.gif_timer = QTimer()
+        self.gif_timer.timeout.connect(self._check_gif_end)
+        self._pending_tier = None
+        self._pending_hard = None
+
+        self.init_ui()
+
+    def init_ui(self):
+
+        self.bg = QLabel(self)
+        self.movie = QMovie(gif_path)
+        self.movie.setCacheMode(QMovie.CacheAll)
+
+        self.bg.setMovie(self.movie)
+        self.bg.setAlignment(Qt.AlignCenter)
+        self.bg.setScaledContents(True)
+        self.bg.lower()
+
+        self.fail_image = QLabel(self)
+        self.fail_image.setAlignment(Qt.AlignCenter)
+        self.fail_image.hide()
+
+        self.laugh_player = QMediaPlayer()
+
+        self.movie.jumpToFrame(0)
+        self.movie.stop()
+
+        self.title = QLabel("Cursed Relic Randomizer", self)
+        self.title.setAlignment(Qt.AlignCenter)
+        self.title.setFont(self.title_font)
+        self.title.setStyleSheet("color: white; background: transparent;")
+
+        self.map_header = QLabel("MAP:", self)
+        self.map_header.setAlignment(Qt.AlignCenter)
+        self.map_header.setFont(self.header_font)
+        self.map_header.setStyleSheet("color: white; background: transparent;")
+
+        self.map_output = QLabel("", self)
+        self.map_output.setAlignment(Qt.AlignCenter)
+        self.map_output.setFont(self.ui_font)
+        self.map_output.setStyleSheet("color: white; background: transparent;")
+
+        self.relic_header = QLabel("RELICS:", self)
+        self.relic_header.setAlignment(Qt.AlignCenter)
+        self.relic_header.setFont(self.header_font)
+        self.relic_header.setStyleSheet("color: white; background: transparent;")
+
+        self.output = QLabel("", self)
+        self.output.setAlignment(Qt.AlignCenter)
+        self.output.setWordWrap(True)
+        self.output.setFont(self.ui_font)
+        self.output.setStyleSheet("color: white; background: transparent;")
+
+        self.tier_box = QComboBox(self)
+        self.tier_box.addItems(["Tier 1", "Tier 2", "Tier 3", "Tier 3 HARD MODE"])
+        self.tier_box.setFont(self.ui_font)
+
+        self.configure_btn = QPushButton("CONFIGURE", self)
+        self.configure_btn.clicked.connect(self.open_config)
+        self.configure_btn.setFont(self.ui_font)
+        self.configure_btn.setStyleSheet("""
+        QPushButton {
+            background-color: rgba(0, 0, 0, 160);
+            color: white;
+            border: 1px solid white;
+            border-radius: 4px;
+        }
+        QPushButton:hover { background-color: rgba(40,40,40,200); }
+        QPushButton:pressed { background-color: rgba(80,80,80,220); }
+        """)
+
+        self.spin_btn = QPushButton("SPIN MYSTERY BOX", self)
+        self.spin_btn.setFont(self.ui_font)
+        self.spin_btn.clicked.connect(self.spin)
+        self.spin_btn.setStyleSheet("""
+        QPushButton {
+            background-color: rgba(0, 0, 0, 160);
+            color: white;
+            border: 1px solid white;
+            border-radius: 4px;
+        }
+        QPushButton:hover { background-color: rgba(40,40,40,200); }
+        QPushButton:pressed { background-color: rgba(80,80,80,220); }
+        """)
+
+        self.reset_btn = QPushButton("RESET", self)
+        self.reset_btn.setFont(self.ui_font)
+        self.reset_btn.clicked.connect(self.reset)
+
+        self.credits_btn = QLabel("CREDITS", self)
+        self.credits_btn.setFont(self.credits_font)
+        self.credits_btn.setCursor(Qt.PointingHandCursor)
+        self.credits_btn.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        self.credits_btn.setStyleSheet("""
+        color: white;
+        background: transparent;
+        padding: 0px;
+        margin: 0px;
+        """)
+        self.credits_btn.mousePressEvent = self.show_credits
+
+        self.map_header.hide()
+        self.relic_header.hide()
+
+        self.update_layout()
+
+    def open_config(self):
+        dlg = ConfigureDialog(self)
+        dlg.exec_()
+
+    def update_layout(self):
+
+        s = self.scale
+        w = self.width()
+        h = self.height()
+
+        self.setFixedSize(self.base_w, self.base_h)
+
+        self.bg.setGeometry(0, 0, w, h)
+
+        self.title.setGeometry(0, int(5 * s), w, int(50 * s))
+
+        self.map_header.setGeometry(0, int(125 * s), w, int(25 * s))
+
+        self.map_output.setGeometry(0, int(150 * s), w, int(30 * s))
+
+        self.relic_header.setGeometry(0, int(200 * s), w, int(25 * s))
+
+        self.fail_image.setGeometry(int((w - 300 * s) / 2), int(170 * s), int(300 * s), int(240 * s))
+
+        self.output.setGeometry(int((w - 440 * s) / 2), int(170 * s), int(440 * s), int(240 * s))
+
+        self.tier_box.setGeometry(int(10 * s), int(60 * s), int(188 * s), int(30 * s))
+
+        self.configure_btn.setGeometry(int(10 * s), int(95 * s), int(188 * s), int(25 * s))
+
+        self.spin_btn.setGeometry(int((w - 240 * s) / 2), int(450 * s), int(240 * s), int(34 * s))
+
+        self.reset_btn.setGeometry(int(10 * s), int(10 * s), int(80 * s), int(30 * s))
+
+        self.credits_btn.setGeometry(int(10 * s), int(470 * s), int(120 * s), int(20 * s))
+
+    def show_credits(self, event):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Credits")
+        msg.setFont(self.credits_font)
+        msg.setText(
+            "Background AOTD static art: Grillmaster Harry (@Vermontious on X)\n"
+            "COD Zombies Mystery box Model By P3p33 (https://skfb.ly/oVVnx)\n"
+            "Animations and Application designed by Strissel (Me!)"
+        )
+        msg.exec_()
+
+    def play_audio(self):
+        url = QUrl.fromLocalFile(os.path.abspath(audio_path))
+        self.player.stop()
+        self.player.setMedia(QMediaContent(url))
+        self.player.play()
+
+    def play_gif(self):
+        self.movie.stop()
+        self.movie.jumpToFrame(0)
+        self.movie.start()
+        self.gif_timer.start(30)
+
+    def _check_gif_end(self):
+        current = self.movie.currentFrameNumber()
+        last = self.movie.frameCount() - 1
+
+        if last > 0 and current >= last:
+            self.gif_timer.stop()
+            self.movie.stop()
+            self.movie.jumpToFrame(last)
+
+            if self._pending_tier is not None:
+                self.reveal(self._pending_tier, self._pending_hard)
+                self._pending_tier = None
+                self._pending_hard = None
+
+    def spin(self):
+
+        choice = self.tier_box.currentText()
+
+        tier = 1 if choice == "Tier 1" else 2 if choice == "Tier 2" else 3
+        hard = choice == "Tier 3 HARD MODE"
+
+        self.spin_btn.setEnabled(False)
+        self.output.setText("")
+        self.map_output.setText("")
+        self.map_header.hide()
+
+        self._pending_tier = tier
+        self._pending_hard = hard
+
+        self.play_gif()
+        QTimer.singleShot(150, self.play_audio)
+
+        self.fail_image.hide()
+
+    def reveal(self, tier, hard):
+
+        if self.enabled_maps:
+            selected_map = random.choice(self.enabled_maps)
+            self.map_output.setText(selected_map)
+            self.map_header.show()
+        else:
+            self.map_output.setText("")
+            self.map_header.hide()
+
+        combo = pick_random_combination(
+            {1: 3, 2: 6, 3: 9}[tier],
+            tier,
+            self.enabled_relics,
+            hard
+        )
+
+        if not combo:
+            self.output.setText("")
+            from PyQt5.QtGui import QPixmap
+
+            pix = QPixmap(mrpeeks_path).scaled(
+                int(200 * MRPEEKS_SCALE),
+                int(185 * MRPEEKS_SCALE),
+                Qt.KeepAspectRatio,
+                
+            )
+
+            self.fail_image.setPixmap(pix)
+            self.fail_image.show()
+
+            url = QUrl.fromLocalFile(os.path.abspath(laugh_path))
+            self.laugh_player.stop()
+            self.laugh_player.setMedia(QMediaContent(url))
+            self.laugh_player.play()
+
+            self.spin_btn.setEnabled(True)
+            return
+
+        names = [letter_objects[l][0] for l in combo]
+
+        lines = ["RELICS:"]
+
+        if tier == 3 and hard:
+            for i in range(0, len(names), 2):
+                lines.append(", ".join(names[i:i+2]))
+        else:
+            lines.extend(names)
+
+        self.output.setText("\n".join(lines))
+
+        self.spin_btn.setEnabled(True)
+
+    def reset(self):
+        self.movie.stop()
+        self.movie.jumpToFrame(0)
+
+        self.output.setText("")
+        self.map_output.setText("")
+
+        self.map_header.hide()
+        self.relic_header.hide()
+
+        self.fail_image.hide()
+
+        self.tier_box.setCurrentIndex(0)
+        self.spin_btn.setEnabled(True)
+
+        self._pending_tier = None
+        self._pending_hard = None
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    w = RelicApp()
+    w.show()
+    sys.exit(app.exec_())
